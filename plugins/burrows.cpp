@@ -37,17 +37,16 @@ using namespace DFHack;
 using namespace df::enums;
 using namespace dfproto;
 
-using df::global::ui;
-using df::global::world;
-using df::global::gamemode;
+DFHACK_PLUGIN("burrows");
+REQUIRE_GLOBAL(ui);
+REQUIRE_GLOBAL(world);
+REQUIRE_GLOBAL(gamemode);
 
 /*
  * Initialization.
  */
 
 static command_result burrow(color_ostream &out, vector <string> & parameters);
-
-DFHACK_PLUGIN("burrows");
 
 static void init_map(color_ostream &out);
 static void deinit_map(color_ostream &out);
@@ -548,8 +547,8 @@ static bool setTilesByKeyword(df::burrow *target, std::string name, bool enable)
 {
     CHECK_NULL_POINTER(target);
 
-    df::tile_designation mask(0);
-    df::tile_designation value(0);
+    df::tile_designation mask;
+    df::tile_designation value;
 
     if (name == "ABOVE_GROUND")
         mask.bits.subterranean = true;

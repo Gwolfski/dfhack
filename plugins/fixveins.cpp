@@ -14,12 +14,18 @@
 #include "modules/Maps.h"
 #include "TileTypes.h"
 
+#include "df/block_square_event.h"
+#include "df/block_square_event_mineralst.h"
+#include "df/map_block.h"
+#include "df/world.h"
+
 using std::vector;
 using std::string;
 using namespace DFHack;
 using namespace df::enums;
 
-using df::global::world;
+DFHACK_PLUGIN("fixveins");
+REQUIRE_GLOBAL(world);
 
 bool setTileMaterial(df::tiletype &tile, const df::tiletype_material mat)
 {
@@ -94,8 +100,6 @@ command_result df_fixveins (color_ostream &out, vector <string> & parameters)
         out.print("Restored missing references to %i mineral inclusion and %i map feature tiles.\n", mineral_added, feature_added);
     return CR_OK;
 }
-
-DFHACK_PLUGIN("fixveins");
 
 DFhackCExport command_result plugin_init ( color_ostream &out, std::vector <PluginCommand> &commands)
 {

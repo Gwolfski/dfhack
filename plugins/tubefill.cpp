@@ -14,10 +14,14 @@
 #include "TileTypes.h"
 
 #include "df/deep_vein_hollow.h"
+#include "df/map_block.h"
+#include "df/world.h"
 
 using namespace DFHack;
 using namespace df::enums;
-using df::global::world;
+
+DFHACK_PLUGIN("tubefill");
+REQUIRE_GLOBAL(world);
 
 bool isDesignatedHollow(df::coord pos)
 {
@@ -32,8 +36,6 @@ bool isDesignatedHollow(df::coord pos)
 }
 
 command_result tubefill(color_ostream &out, std::vector<std::string> & params);
-
-DFHACK_PLUGIN("tubefill");
 
 DFhackCExport command_result plugin_init ( color_ostream &out, std::vector <PluginCommand> &commands)
 {

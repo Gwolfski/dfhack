@@ -27,6 +27,8 @@
 
 #include "modules/World.h"
 
+#include "uicommon.h"
+
 using std::map;
 using std::string;
 using std::vector;
@@ -34,12 +36,12 @@ using std::vector;
 using namespace DFHack;
 using namespace df::enums;
 
-using df::global::gps;
-using df::global::ui;
-using df::global::world;
-
 DFHACK_PLUGIN("resume");
 #define PLUGIN_VERSION 0.2
+
+REQUIRE_GLOBAL(gps);
+REQUIRE_GLOBAL(ui);
+REQUIRE_GLOBAL(world);
 
 #ifndef HAVE_NULLPTR
 #define nullptr 0L
@@ -48,30 +50,6 @@ DFHACK_PLUGIN("resume");
 DFhackCExport command_result plugin_shutdown ( color_ostream &out )
 {
     return CR_OK;
-}
-
-template <class T, typename Fn>
-static void for_each_(vector<T> &v, Fn func)
-{
-    for_each(v.begin(), v.end(), func);
-}
-
-template <class T, class V, typename Fn> 
-static void transform_(vector<T> &src, vector<V> &dst, Fn func)
-{
-    transform(src.begin(), src.end(), back_inserter(dst), func);
-}
-
-void OutputString(int8_t color, int &x, int &y, const std::string &text, bool newline = false, int left_margin = 0)
-{
-    Screen::paintString(Screen::Pen(' ', color, 0), x, y, text);
-    if (newline)
-    {
-        ++y;
-        x = left_margin;
-    }
-    else
-        x += text.length();
 }
 
 df::job *get_suspended_job(df::building *bld)
@@ -147,7 +125,7 @@ void show_suspended_buildings()
 
     auto dims = Gui::getDwarfmodeViewDims();
     int left_margin = vx + dims.map_x2;
-    int bottom_margin = vy + dims.y2;
+    int bottom_margin = vy + dims.map_y2 - 1;
 
     for (auto sb = suspended_buildings.begin(); sb != suspended_buildings.end();)
     {
@@ -168,7 +146,7 @@ void show_suspended_buildings()
             else if (sb->was_resumed)
                 color = COLOR_RED;
 
-            OutputString(color, x, y, "X");
+            OutputString(color, x, y, "X", false, 0, 0, true /* map */);
         }
 
         sb++;
@@ -298,8 +276,8 @@ DFhackCExport command_result plugin_init ( color_ostream &out, std::vector <Plug
 {
     commands.push_back(
         PluginCommand(
-        "resume", "A plugin to help display and resume suspended constructions conveniently",
-        resume_cmd, false, 
+        "resume", "Display and easily resume suspended constructions",
+        resume_cmd, false,
         "resume show\n"
         "  Show overlay when paused:\n"
         "    Yellow: Suspended construction\n"

@@ -1,16 +1,23 @@
+#include <vector>
+#include <cstdio>
+#include <cstdlib>
+#include <stack>
+#include <string>
+#include <cmath>
+
 #include "Core.h"
 #include "Console.h"
 #include "Export.h"
 #include "PluginManager.h"
-#include "modules/Maps.h"
+#include "uicommon.h"
+
 #include "modules/Gui.h"
 #include "modules/MapCache.h"
+#include "modules/Maps.h"
 #include "modules/Materials.h"
-#include <vector>
-#include <cstdio>
-#include <stack>
-#include <string>
-#include <cmath>
+
+#include "df/ui_sidebar_menus.h"
+
 using std::vector;
 using std::string;
 using std::stack;
@@ -27,6 +34,8 @@ command_result digcircle (color_ostream &out, vector <string> & parameters);
 command_result digtype (color_ostream &out, vector <string> & parameters);
 
 DFHACK_PLUGIN("dig");
+REQUIRE_GLOBAL(ui_sidebar_menus);
+REQUIRE_GLOBAL(world);
 
 DFhackCExport command_result plugin_init ( color_ostream &out, std::vector <PluginCommand> &commands)
 {
@@ -54,8 +63,8 @@ DFhackCExport command_result plugin_init ( color_ostream &out, std::vector <Plug
         "  Designates layerstone under the cursor for digging.\n"
         "  Also follows the stone between z-levels with stairs, like 'digl x' would.\n"
         ));
-    commands.push_back(PluginCommand("digexp","Select or designate an exploratory pattern. Use 'digexp ?' for help.",digexp));
-    commands.push_back(PluginCommand("digcircle","Dig designate a circle (filled or hollow) with given diameter.",digcircle));
+    commands.push_back(PluginCommand("digexp","Select or designate an exploratory pattern.",digexp));
+    commands.push_back(PluginCommand("digcircle","Dig designate a circle (filled or hollow)",digcircle));
     //commands.push_back(PluginCommand("digauto","Mark a tile for continuous digging.",autodig));
     commands.push_back(PluginCommand("digtype", "Dig all veins of a given type.", digtype,Gui::cursor_hotkey,
         "For every tile on the map of the same vein type as the selected tile, this command designates it to have the same designation as the selected tile. If the selected tile has no designation, they will be dig designated.\n"
@@ -96,6 +105,7 @@ enum circle_what
 bool dig (MapExtras::MapCache & MCache,
     circle_what what,
     df::tile_dig_designation type,
+    int32_t priority,
     int32_t x, int32_t y, int32_t z,
     int x_max, int y_max
     )
@@ -174,20 +184,21 @@ bool dig (MapExtras::MapCache & MCache,
         break;
     }
     std::cerr << "allowing tt" << (int)tt << "\n";
-    MCache.setDesignationAt(at,des);
+    MCache.setDesignationAt(at,des,priority);
     return true;
 };
 
 bool lineX (MapExtras::MapCache & MCache,
     circle_what what,
     df::tile_dig_designation type,
+    int32_t priority,
     int32_t y1, int32_t y2, int32_t x, int32_t z,
     int x_max, int y_max
     )
 {
     for(int32_t y = y1; y <= y2; y++)
     {
-        dig(MCache, what, type,x,y,z, x_max, y_max);
+        dig(MCache, what, type, priority, x,y,z, x_max, y_max);
     }
     return true;
 };
@@ -195,16 +206,54 @@ bool lineX (MapExtras::MapCache & MCache,
 bool lineY (MapExtras::MapCache & MCache,
     circle_what what,
     df::tile_dig_designation type,
+    int32_t priority,
     int32_t x1, int32_t x2, int32_t y, int32_t z,
     int x_max, int y_max
     )
 {
     for(int32_t x = x1; x <= x2; x++)
     {
-        dig(MCache, what, type,x,y,z, x_max, y_max);
+        dig(MCache, what, type, priority, x,y,z, x_max, y_max);
     }
     return true;
 };
+
+int32_t parse_priority(color_ostream &out, vector<string> &parameters)
+{
+    int32_t default_priority = ui_sidebar_menus->designation.priority;
+
+    for (auto it = parameters.begin(); it != parameters.end(); ++it)
+    {
+        const string &s = *it;
+        if (s.substr(0, 2) == "p=" || s.substr(0, 2) == "-p")
+        {
+            if (s.size() >= 3)
+            {
+                auto priority = int32_t(1000 * atof(s.c_str() + 2));
+                parameters.erase(it);
+                return priority;
+            }
+            else if (it + 1 != parameters.end())
+            {
+                auto priority = int32_t(1000 * atof((*(it + 1)).c_str()));
+                parameters.erase(it, it + 2);
+                return priority;
+            }
+            else
+            {
+                out.printerr("invalid priority specified; reverting to %i\n", default_priority);
+                break;
+            }
+        }
+    }
+
+    return default_priority;
+}
+
+string forward_priority(color_ostream &out, vector<string> &parameters)
+{
+    return string("-p") + int_to_string(parse_priority(out, parameters) / 1000);
+}
 
 command_result digcircle (color_ostream &out, vector <string> & parameters)
 {
@@ -214,6 +263,8 @@ command_result digcircle (color_ostream &out, vector <string> & parameters)
     static int diameter = 0;
     auto saved_d = diameter;
     bool force_help = false;
+    int32_t priority = parse_priority(out, parameters);
+
     for(size_t i = 0; i < parameters.size();i++)
     {
         if(parameters[i] == "help" || parameters[i] == "?")
@@ -292,6 +343,7 @@ command_result digcircle (color_ostream &out, vector <string> & parameters)
             "   chan = dig channel\n"
             "\n"
             "      # = diameter in tiles (default = 0)\n"
+            "   -p # = designation priority (default = 4)\n"
             "\n"
             "After you have set the options, the command called with no options\n"
             "repeats with the last selected parameters:\n"
@@ -325,12 +377,12 @@ command_result digcircle (color_ostream &out, vector <string> & parameters)
         // paint center
         if(filled)
         {
-            lineY(MCache,what,type, cx - r, cx + r, cy, cz,x_max,y_max);
+            lineY(MCache, what, type, priority, cx - r, cx + r, cy, cz, x_max, y_max);
         }
         else
         {
-            dig(MCache, what, type,cx - r, cy, cz,x_max,y_max);
-            dig(MCache, what, type,cx + r, cy, cz,x_max,y_max);
+            dig(MCache, what, type, priority, cx - r, cy, cz, x_max, y_max);
+            dig(MCache, what, type, priority, cx + r, cy, cz, x_max, y_max);
         }
         adjust = false;
         iter = 2;
@@ -362,24 +414,24 @@ command_result digcircle (color_ostream &out, vector <string> & parameters)
         // paint
         if(filled || iter == diameter - 1)
         {
-            lineY(MCache,what,type, left, right, top , cz,x_max,y_max);
-            lineY(MCache,what,type, left, right, bottom , cz,x_max,y_max);
+            lineY(MCache, what, type, priority, left, right, top, cz, x_max, y_max);
+            lineY(MCache, what, type, priority, left, right, bottom, cz, x_max, y_max);
         }
         else
         {
-            dig(MCache, what, type,left, top, cz,x_max,y_max);
-            dig(MCache, what, type,left, bottom, cz,x_max,y_max);
-            dig(MCache, what, type,right, top, cz,x_max,y_max);
-            dig(MCache, what, type,right, bottom, cz,x_max,y_max);
+            dig(MCache, what, type, priority, left, top, cz, x_max, y_max);
+            dig(MCache, what, type, priority, left, bottom, cz, x_max, y_max);
+            dig(MCache, what, type, priority, right, top, cz, x_max, y_max);
+            dig(MCache, what, type, priority, right, bottom, cz, x_max, y_max);
         }
         if(!filled && diff > 1)
         {
             int lright = cx + lastwhole;
             int lleft = cx - lastwhole + adjust;
-            lineY(MCache,what,type, lleft + 1, left - 1, top + 1 , cz,x_max,y_max);
-            lineY(MCache,what,type, right + 1, lright - 1, top + 1 , cz,x_max,y_max);
-            lineY(MCache,what,type, lleft + 1, left - 1, bottom - 1 , cz,x_max,y_max);
-            lineY(MCache,what,type, right + 1, lright - 1, bottom - 1 , cz,x_max,y_max);
+            lineY(MCache, what, type, priority, lleft + 1, left - 1, top + 1 , cz, x_max, y_max);
+            lineY(MCache, what, type, priority, right + 1, lright - 1, top + 1 , cz, x_max, y_max);
+            lineY(MCache, what, type, priority, lleft + 1, left - 1, bottom - 1 , cz, x_max, y_max);
+            lineY(MCache, what, type, priority, right + 1, lright - 1, bottom - 1 , cz, x_max, y_max);
         }
         lastwhole = whole;
     }
@@ -807,6 +859,8 @@ command_result digexp (color_ostream &out, vector <string> & parameters)
     bool force_help = false;
     static explo_how how = EXPLO_NOTHING;
     static explo_what what = EXPLO_HIDDEN;
+    int32_t priority = parse_priority(out, parameters);
+
     for(size_t i = 0; i < parameters.size();i++)
     {
         if(parameters[i] == "help" || parameters[i] == "?")
@@ -962,7 +1016,7 @@ command_result digexp (color_ostream &out, vector <string> & parameters)
                 if(cross[y][x])
                 {
                     des.bits.dig = tile_dig_designation::Default;
-                    mx.setDesignationAt(pos,des);
+                    mx.setDesignationAt(pos,des,priority);
                 }
             }
         mx.WriteAll();
@@ -983,6 +1037,7 @@ command_result digvx (color_ostream &out, vector <string> & parameters)
     // HOTKEY COMMAND: CORE ALREADY SUSPENDED
     vector <string> lol;
     lol.push_back("x");
+    lol.push_back(forward_priority(out, parameters));
     return digv(out,lol);
 }
 
@@ -991,6 +1046,8 @@ command_result digv (color_ostream &out, vector <string> & parameters)
     // HOTKEY COMMAND: CORE ALREADY SUSPENDED
     uint32_t x_max,y_max,z_max;
     bool updown = false;
+    int32_t priority = parse_priority(out, parameters);
+
     for(size_t i = 0; i < parameters.size();i++)
     {
         if(parameters.size() && parameters[0]=="x")
@@ -1117,7 +1174,7 @@ command_result digv (color_ostream &out, vector <string> & parameters)
                         des_minus.bits.dig = tile_dig_designation::UpDownStair;
                     else
                         des_minus.bits.dig = tile_dig_designation::UpStair;
-                    MCache->setDesignationAt(current-1,des_minus);
+                    MCache->setDesignationAt(current-1,des_minus,priority);
 
                     des.bits.dig = tile_dig_designation::DownStair;
                 }
@@ -1129,7 +1186,7 @@ command_result digv (color_ostream &out, vector <string> & parameters)
                         des_plus.bits.dig = tile_dig_designation::UpDownStair;
                     else
                         des_plus.bits.dig = tile_dig_designation::DownStair;
-                    MCache->setDesignationAt(current+1,des_plus);
+                    MCache->setDesignationAt(current+1,des_plus,priority);
 
                     if(des.bits.dig == tile_dig_designation::DownStair)
                         des.bits.dig = tile_dig_designation::UpDownStair;
@@ -1139,7 +1196,7 @@ command_result digv (color_ostream &out, vector <string> & parameters)
             }
             if(des.bits.dig == tile_dig_designation::No)
                 des.bits.dig = tile_dig_designation::Default;
-            MCache->setDesignationAt(current,des);
+            MCache->setDesignationAt(current,des,priority);
         }
     }
     MCache->WriteAll();
@@ -1152,10 +1209,11 @@ command_result diglx (color_ostream &out, vector <string> & parameters)
     // HOTKEY COMMAND: CORE ALREADY SUSPENDED
     vector <string> lol;
     lol.push_back("x");
+    lol.push_back(forward_priority(out, parameters));
     return digl(out,lol);
 }
 
-// TODO: 
+// TODO:
 // digl and digv share the longish floodfill code and only use different conditions
 // to check if a tile should be marked for digging or not.
 // to make the plugin a bit smaller and cleaner a main execute method would be nice
@@ -1167,6 +1225,8 @@ command_result digl (color_ostream &out, vector <string> & parameters)
     uint32_t x_max,y_max,z_max;
     bool updown = false;
     bool undo = false;
+    int32_t priority = parse_priority(out, parameters);
+
     for(size_t i = 0; i < parameters.size();i++)
     {
         if(parameters[i]=="x")
@@ -1325,7 +1385,7 @@ command_result digl (color_ostream &out, vector <string> & parameters)
                     // undo mode: clear designation
                     if(undo)
                         des_minus.bits.dig = tile_dig_designation::No;
-                    MCache->setDesignationAt(current-1,des_minus);
+                    MCache->setDesignationAt(current-1,des_minus,priority);
 
                     des.bits.dig = tile_dig_designation::DownStair;
                 }
@@ -1340,7 +1400,7 @@ command_result digl (color_ostream &out, vector <string> & parameters)
                     // undo mode: clear designation
                     if(undo)
                         des_plus.bits.dig = tile_dig_designation::No;
-                    MCache->setDesignationAt(current+1,des_plus);
+                    MCache->setDesignationAt(current+1,des_plus,priority);
 
                     if(des.bits.dig == tile_dig_designation::DownStair)
                         des.bits.dig = tile_dig_designation::UpDownStair;
@@ -1353,7 +1413,7 @@ command_result digl (color_ostream &out, vector <string> & parameters)
             // undo mode: clear designation
             if(undo)
                 des.bits.dig = tile_dig_designation::No;
-            MCache->setDesignationAt(current,des);
+            MCache->setDesignationAt(current,des,priority);
         }
     }
     MCache->WriteAll();
@@ -1370,13 +1430,14 @@ command_result digauto (color_ostream &out, vector <string> & parameters)
 command_result digtype (color_ostream &out, vector <string> & parameters)
 {
     //mostly copy-pasted from digv
+    int32_t priority = parse_priority(out, parameters);
     CoreSuspender suspend;
     if ( parameters.size() > 1 )
     {
         out.printerr("Too many parameters.\n");
         return CR_FAILURE;
     }
-    
+
     uint32_t targetDigType;
     if ( parameters.size() == 1 )
     {
@@ -1405,13 +1466,13 @@ command_result digtype (color_ostream &out, vector <string> & parameters)
     {
         targetDigType = -1;
     }
-    
+
     if (!Maps::IsValid())
     {
         out.printerr("Map is not available!\n");
         return CR_FAILURE;
     }
-    
+
     int32_t cx, cy, cz;
     uint32_t xMax,yMax,zMax;
     Maps::getSize(xMax,yMax,zMax);
@@ -1435,7 +1496,7 @@ command_result digtype (color_ostream &out, vector <string> & parameters)
         return CR_FAILURE;
     }
     out.print("(%d,%d,%d) tiletype: %d, veinmat: %d, designation: 0x%x ... DIGGING!\n", cx,cy,cz, tt, veinmat, baseDes.whole);
-    
+
     if ( targetDigType != -1 )
     {
         baseDes.bits.dig = (tile_dig_designation::tile_dig_designation)targetDigType;
@@ -1447,7 +1508,7 @@ command_result digtype (color_ostream &out, vector <string> & parameters)
             baseDes.bits.dig = tile_dig_designation::Default;
         }
     }
-    
+
     for( uint32_t z = 0; z < zMax; z++ )
     {
         for( uint32_t x = 1; x < tileXMax-1; x++ )
@@ -1461,7 +1522,7 @@ command_result digtype (color_ostream &out, vector <string> & parameters)
                 tt = mCache->tiletypeAt(current);
                 if (!DFHack::isWallTerrain(tt))
                     continue;
-                
+
                 //designate it for digging
                 df::tile_designation des = mCache->designationAt(current);
                 if ( !mCache->testCoord(current) )
@@ -1470,14 +1531,14 @@ command_result digtype (color_ostream &out, vector <string> & parameters)
                     delete mCache;
                     return CR_FAILURE;
                 }
-                
+
                 df::tile_designation designation = mCache->designationAt(current);
                 designation.bits.dig = baseDes.bits.dig;
-                mCache->setDesignationAt(current, designation);
+                mCache->setDesignationAt(current, designation,priority);
             }
         }
     }
-    
+
     mCache->WriteAll();
     delete mCache;
     return CR_OK;

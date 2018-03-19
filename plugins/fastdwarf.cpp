@@ -1,15 +1,17 @@
 #include "Core.h"
 #include "Console.h"
+#include "DataDefs.h"
 #include "Export.h"
 #include "PluginManager.h"
 #include "modules/Units.h"
 #include "modules/Maps.h"
 
-#include "DataDefs.h"
-#include "df/world.h"
+#include "df/map_block.h"
 #include "df/unit.h"
 #include "df/unit_action.h"
-#include "df/map_block.h"
+#include "df/unit_relationship_type.h"
+#include "df/units_other_id.h"
+#include "df/world.h"
 
 using std::string;
 using std::vector;
@@ -17,13 +19,10 @@ using std::vector;
 using namespace DFHack;
 using namespace df::enums;
 
-using df::global::world;
-using df::global::debug_turbospeed;
-
-// dfhack interface
 DFHACK_PLUGIN("fastdwarf");
-
 DFHACK_PLUGIN_IS_ENABLED(active);
+REQUIRE_GLOBAL(world);
+using df::global::debug_turbospeed;  // not required
 
 static bool enable_fastdwarf = false;
 static bool enable_teledwarf = false;
@@ -58,11 +57,12 @@ DFhackCExport command_result plugin_onupdate ( color_ostream &out )
         if (enable_teledwarf) do
         {
             // skip dwarves that are dragging creatures or being dragged
-            if ((unit->relations.draggee_id != -1) || (unit->relations.dragger_id != -1))
+            if ((unit->relationship_ids[df::unit_relationship_type::Draggee] != -1) ||
+                (unit->relationship_ids[df::unit_relationship_type::Dragger] != -1))
                 break;
 
             // skip dwarves that are following other units
-            if (unit->relations.following != 0)
+            if (unit->following != 0)
                 break;
 
             // skip unconscious units
@@ -100,6 +100,17 @@ DFhackCExport command_result plugin_onupdate ( color_ostream &out )
             // move unit to destination
             unit->pos = unit->path.dest;
             unit->path.path.clear();
+
+            //move unit's riders(including babies) to destination
+            if (unit->flags1.bits.ridden)
+            {
+                for (size_t j = 0; j < world->units.other[units_other_id::ANY_RIDER].size(); j++)
+                {
+                    df::unit *rider = world->units.other[units_other_id::ANY_RIDER][j];
+                    if (rider->relationship_ids[df::unit_relationship_type::RiderMount] == unit->id)
+                        rider->pos = unit->pos;
+                }
+            }
         } while (0);
 
         if (enable_fastdwarf)
@@ -115,16 +126,15 @@ DFhackCExport command_result plugin_onupdate ( color_ostream &out )
                 case unit_action_type::Attack:
                     // Attacks are executed when timer1 reaches zero, which will be
                     // on the following tick.
-                    action->data.attack.timer1 = 1;
+                    if (action->data.attack.timer1 > 1)
+                        action->data.attack.timer1 = 1;
                     // Attack actions are completed, and new ones generated, when
-                    // timer2 reaches zero.  If set to 1 this never seems to occur.
-                    // Setting to zero makes next tick generate a new attack action
-                    // every time, thereby allowing target enemy/body part re-selection
-                    // take place.
-                    action->data.attack.timer2 = 0;
+                    // timer2 reaches zero.
+                    if (action->data.attack.timer2 > 1)
+                        action->data.attack.timer2 = 1;
                     break;
-                case unit_action_type::Hold:
-                    action->data.hold.timer = 1;
+                case unit_action_type::HoldTerrain:
+                    action->data.holdterrain.timer = 1;
                     break;
                 case unit_action_type::Climb:
                     action->data.climb.timer = 1;
@@ -238,7 +248,7 @@ DFhackCExport command_result plugin_enable ( color_ostream &out, bool enable )
 DFhackCExport command_result plugin_init ( color_ostream &out, std::vector <PluginCommand> &commands)
 {
     commands.push_back(PluginCommand("fastdwarf",
-        "enable/disable fastdwarf and teledwarf (parameters=0/1)",
+        "let dwarves teleport and/or finish jobs instantly",
         fastdwarf, false,
         "fastdwarf: make dwarves faster.\n"
         "Usage:\n"
@@ -251,6 +261,6 @@ DFhackCExport command_result plugin_init ( color_ostream &out, std::vector <Plug
         " * 0 - Disable dwarf teleportation (default)\n"
         " * 1 - Make dwarves teleport to their destinations instantly.\n"
         ));
-    
+
     return CR_OK;
 }

@@ -1,22 +1,26 @@
 // Make the camera follow the selected unit
 
+#include "Console.h"
 #include "Core.h"
-#include <Console.h>
-#include <Export.h>
-#include <PluginManager.h>
-
-#include "DFHack.h"
 #include "DataDefs.h"
+#include "DFHack.h"
+#include "Export.h"
+#include "PluginManager.h"
+
 #include "modules/Gui.h"
-#include "modules/World.h"
 #include "modules/Maps.h"
-#include <df/unit.h>
-#include <df/creature_raw.h>
+#include "modules/World.h"
+
+#include "df/creature_raw.h"
+#include "df/unit.h"
+#include "df/world.h"
 
 using namespace DFHack;
 using namespace df::enums;
 
-using df::global::world;
+DFHACK_PLUGIN("follow");
+DFHACK_PLUGIN_IS_ENABLED(is_enabled);
+REQUIRE_GLOBAL(world);
 
 command_result follow (color_ostream &out, std::vector <std::string> & parameters);
 
@@ -24,13 +28,10 @@ df::unit *followedUnit;
 int32_t prevX, prevY, prevZ;
 uint8_t prevMenuWidth;
 
-DFHACK_PLUGIN("follow");
-DFHACK_PLUGIN_IS_ENABLED(is_enabled);
-
 DFhackCExport command_result plugin_init ( color_ostream &out, std::vector <PluginCommand> &commands)
 {
     commands.push_back(PluginCommand(
-        "follow", "Follow the selected unit until camera control is released",
+        "follow", "Make the screen follow the selected unit",
         follow, Gui::view_unit_hotkey,
         "  Select a unit and run this plugin to make the camera follow it.\n"
         "  Moving the camera yourself deactivates the plugin.\n"
@@ -127,7 +128,7 @@ DFhackCExport command_result plugin_onupdate ( color_ostream &out )
         Gui::setCursorCoords(c_x - (prevX-x), c_y - (prevY-y), z);
 
     //Save this round's stuff for next time so we can monitor for changes made by the user
-    prevX = x; 
+    prevX = x;
     prevY = y;
     prevZ = z;
     prevMenuWidth = menu_width;

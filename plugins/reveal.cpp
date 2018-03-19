@@ -10,8 +10,11 @@
 #include "modules/World.h"
 #include "modules/MapCache.h"
 #include "modules/Gui.h"
-#include "df/construction.h"
+
 #include "df/block_square_event_frozen_liquidst.h"
+#include "df/construction.h"
+#include "df/world.h"
+
 using MapExtras::MapCache;
 
 using std::string;
@@ -20,7 +23,10 @@ using std::vector;
 using namespace DFHack;
 using namespace df::enums;
 
-using df::global::world;
+DFHACK_PLUGIN("reveal");
+DFHACK_PLUGIN_IS_ENABLED(is_active);
+
+REQUIRE_GLOBAL(world);
 
 /*
  * Anything that might reveal Hell is unsafe.
@@ -38,7 +44,7 @@ bool isSafe(df::coord c)
     if (local_feature.type == feature_type::deep_special_tube || local_feature.type == feature_type::deep_surface_portal)
         return false;
     // And Hell *is* Hell.
-    if (global_feature.type == feature_type::feature_underworld_from_layer)
+    if (global_feature.type == feature_type::underworld_from_layer)
         return false;
     // otherwise it's safe.
     return true;
@@ -72,11 +78,9 @@ command_result revflood(color_ostream &out, vector<string> & params);
 command_result revforget(color_ostream &out, vector<string> & params);
 command_result nopause(color_ostream &out, vector<string> & params);
 
-DFHACK_PLUGIN("reveal");
-
 DFhackCExport command_result plugin_init ( color_ostream &out, vector <PluginCommand> &commands)
 {
-    commands.push_back(PluginCommand("reveal","Reveal the map. 'reveal hell' will also reveal hell. 'reveal demon' won't pause.",reveal,false,
+    commands.push_back(PluginCommand("reveal","Reveal the map.",reveal,false,
         "Reveals the map, by default ignoring hell.\n"
         "Options:\n"
         "hell     - also reveal hell, while forcing the game to pause.\n"
@@ -85,18 +89,16 @@ DFhackCExport command_result plugin_init ( color_ostream &out, vector <PluginCom
         "Reverts the previous reveal operation, hiding the map again.\n"));
     commands.push_back(PluginCommand("revtoggle","Reveal/unreveal depending on state.",revtoggle,false,
         "Toggles between reveal and unreveal.\n"));
-    commands.push_back(PluginCommand("revflood","Hide all, reveal all tiles reachable from cursor position.",revflood,false,
+    commands.push_back(PluginCommand("revflood","Hide all, and reveal tiles reachable from the cursor.",revflood,false,
         "This command hides the whole map. Then, starting from the cursor,\n"
         "reveals all accessible tiles. Allows repairing parma-revealed maps.\n"));
-    commands.push_back(PluginCommand("revforget", "Forget the current reveal data, allowing to use reveal again.",revforget,false,
+    commands.push_back(PluginCommand("revforget", "Forget the current reveal data.",revforget,false,
         "Forget the current reveal data, allowing to use reveal again.\n"));
-    commands.push_back(PluginCommand("nopause","Disable pausing (doesn't affect pause forced by reveal).",nopause,false,
+    commands.push_back(PluginCommand("nopause","Disable manual and automatic pausing.",nopause,false,
         "Disable pausing (doesn't affect pause forced by reveal).\n"
         "Activate with 'nopause 1', deactivate with 'nopause 0'.\n"));
     return CR_OK;
 }
-
-DFHACK_PLUGIN_IS_ENABLED(is_active);
 
 DFhackCExport command_result plugin_onupdate ( color_ostream &out )
 {
@@ -347,7 +349,7 @@ command_result revflood(color_ostream &out, vector<string> & params)
     }
     t_gamemodes gm;
     World::ReadGameMode(gm);
-    if(gm.g_type != game_type::DWARF_MAIN && gm.g_mode != game_mode::DWARF )
+    if(!World::isFortressMode(gm.g_type) || gm.g_mode != game_mode::DWARF )
     {
         out.printerr("Only in proper dwarf mode.\n");
         return CR_FAILURE;
@@ -399,12 +401,25 @@ command_result revflood(color_ostream &out, vector<string> & params)
 
         if(!MCache->testCoord(current))
             continue;
-        df::tiletype tt = MCache->baseTiletypeAt(current);
         df::tile_designation des = MCache->designationAt(current);
         if(!des.bits.hidden)
         {
             continue;
         }
+
+        // use base tile (beneath constructions/ice), to avoid bug #1871
+        df::tiletype tt = MCache->baseTiletypeAt(current);
+
+        // unless the actual tile is a downward stairway
+        df::tiletype ctt = MCache->tiletypeAt(current);
+        switch (tileShape(ctt))
+        {
+        case tiletype_shape::STAIR_UPDOWN:
+        case tiletype_shape::STAIR_DOWN:
+            tt = ctt;
+            break;
+        }
+
         bool below = 0;
         bool above = 0;
         bool sides = 0;

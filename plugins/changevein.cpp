@@ -10,13 +10,18 @@
 #include "modules/Materials.h"
 #include "TileTypes.h"
 
+#include "df/block_square_event.h"
+#include "df/block_square_event_mineralst.h"
+#include "df/map_block.h"
+
 using std::vector;
 using std::string;
 using namespace DFHack;
 using namespace df::enums;
 
-using df::global::world;
-using df::global::cursor;
+DFHACK_PLUGIN("changevein");
+REQUIRE_GLOBAL(world);
+REQUIRE_GLOBAL(cursor);
 
 command_result df_changevein (color_ostream &out, vector <string> & parameters)
 {
@@ -76,8 +81,6 @@ command_result df_changevein (color_ostream &out, vector <string> & parameters)
 
     return CR_OK;
 }
-
-DFHACK_PLUGIN("changevein");
 
 DFhackCExport command_result plugin_init ( color_ostream &out, std::vector <PluginCommand> &commands)
 {

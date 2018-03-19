@@ -1,5 +1,7 @@
 // (un)designate matching plants for gathering/cutting
 
+#include <set>
+
 #include "Core.h"
 #include "Console.h"
 #include "Export.h"
@@ -7,22 +9,24 @@
 #include "DataDefs.h"
 #include "TileTypes.h"
 
-#include "df/world.h"
 #include "df/map_block.h"
-#include "df/tile_dig_designation.h"
-#include "df/plant_raw.h"
 #include "df/plant.h"
+#include "df/plant_raw.h"
+#include "df/tile_dig_designation.h"
+#include "df/world.h"
 
+#include "modules/Designations.h"
 #include "modules/Maps.h"
-#include <set>
 
 using std::string;
 using std::vector;
 using std::set;
+
 using namespace DFHack;
 using namespace df::enums;
 
-using df::global::world;
+DFHACK_PLUGIN("getplants");
+REQUIRE_GLOBAL(world);
 
 command_result df_getplants (color_ostream &out, vector <string> & parameters)
 {
@@ -128,32 +132,24 @@ command_result df_getplants (color_ostream &out, vector <string> & parameters)
             continue;
         if (cur->designation[x][y].bits.hidden)
             continue;
-        if (deselect && cur->designation[x][y].bits.dig == tile_dig_designation::Default)
+        if (deselect && Designations::unmarkPlant(plant))
         {
-            cur->designation[x][y].bits.dig = tile_dig_designation::No;
-            dirty = true;
             ++count;
         }
-        if (!deselect && cur->designation[x][y].bits.dig == tile_dig_designation::No)
+        if (!deselect && Designations::markPlant(plant))
         {
-            cur->designation[x][y].bits.dig = tile_dig_designation::Default;
-            dirty = true;
             ++count;
         }
-        if (dirty)
-            cur->flags.bits.designated = true;
     }
     if (count)
         out.print("Updated %d plant designations.\n", count);
     return CR_OK;
 }
 
-DFHACK_PLUGIN("getplants");
-
 DFhackCExport command_result plugin_init ( color_ostream &out, vector <PluginCommand> &commands)
 {
     commands.push_back(PluginCommand(
-        "getplants", "Cut down all of the specified trees or gather specified shrubs",
+        "getplants", "Cut down trees or gather shrubs by ID",
         df_getplants, false,
         "  Specify the types of trees to cut down and/or shrubs to gather by their\n"
         "  plant IDs, separated by spaces.\n"

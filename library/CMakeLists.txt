@@ -1,17 +1,19 @@
 PROJECT (dfapi)
 cmake_minimum_required(VERSION 2.8)
 
+# prevent CMake warnings about INTERFACE_LINK_LIBRARIES vs LINK_INTERFACE_LIBRARIES
+IF(CMAKE_VERSION VERSION_GREATER "2.8.12")
+    CMAKE_POLICY(SET CMP0022 OLD)
+ENDIF()
+
 ## build options
 OPTION(BUILD_DEVEL "Install/package files required for development (For SDK)." OFF)
-OPTION(BUILD_DOXYGEN "Create/install/package doxygen documentation for DFHack (For SDK)." OFF)
 IF(UNIX)
     OPTION(CONSOLE_NO_CATCH "Make the console not catch 'CTRL+C' events for easier debugging." OFF)
 ENDIF()
 
 include_directories (proto)
 include_directories (include)
-
-SET(PERL_EXECUTABLE "perl" CACHE FILEPATH "This is the perl executable to run in the codegen step. Tweak it if you need to run a specific one.")
 
 execute_process(COMMAND ${PERL_EXECUTABLE} xml/list.pl xml ${dfapi_SOURCE_DIR}/include/df ";"
                 WORKING_DIRECTORY ${dfapi_SOURCE_DIR}
@@ -22,6 +24,7 @@ SET_SOURCE_FILES_PROPERTIES(${GENERATED_HDRS} PROPERTIES HEADER_FILE_ONLY TRUE G
 SET(MAIN_HEADERS
 include/Internal.h
 include/DFHack.h
+include/DFHackVersion.h
 include/Console.h
 include/Core.h
 include/ColorText.h
@@ -54,6 +57,7 @@ SET(MAIN_SOURCES
 Core.cpp
 ColorText.cpp
 DataDefs.cpp
+Error.cpp
 VTableInterpose.cpp
 LuaWrapper.cpp
 LuaTypes.cpp
@@ -87,15 +91,15 @@ ENDIF()
 SET(MAIN_SOURCES_LINUX
 Console-posix.cpp
 Hooks-linux.cpp
-PlugLoad-linux.cpp
+PlugLoad-posix.cpp
 Process-linux.cpp
 )
 
 SET(MAIN_SOURCES_DARWIN
 Console-posix.cpp
-PlugLoad-darwin.cpp
-Process-darwin.cpp
 Hooks-darwin.cpp
+PlugLoad-posix.cpp
+Process-darwin.cpp
 )
 
 SET(MAIN_SOURCES_LINUX_EGGY
@@ -109,34 +113,39 @@ SET(MODULE_HEADERS
 include/modules/Buildings.h
 include/modules/Burrows.h
 include/modules/Constructions.h
-include/modules/Units.h
+include/modules/Designations.h
 include/modules/Engravings.h
 include/modules/EventManager.h
+include/modules/Filesystem.h
+include/modules/Graphic.h
 include/modules/Gui.h
+include/modules/GuiHooks.h
 include/modules/Items.h
 include/modules/Job.h
 include/modules/kitchen.h
-include/modules/Maps.h
 include/modules/MapCache.h
+include/modules/Maps.h
 include/modules/Materials.h
 include/modules/Notes.h
+include/modules/Once.h
 include/modules/Random.h
+include/modules/Renderer.h
 include/modules/Screen.h
 include/modules/Translation.h
+include/modules/Units.h
 include/modules/Vermin.h
 include/modules/World.h
-include/modules/Graphic.h
-include/modules/Once.h
-include/modules/Filesystem.h
 )
 
 SET( MODULE_SOURCES
 modules/Buildings.cpp
 modules/Burrows.cpp
 modules/Constructions.cpp
-modules/Units.cpp
+modules/Designations.cpp
 modules/Engravings.cpp
 modules/EventManager.cpp
+modules/Filesystem.cpp
+modules/Graphic.cpp
 modules/Gui.cpp
 modules/Items.cpp
 modules/Job.cpp
@@ -145,16 +154,36 @@ modules/MapCache.cpp
 modules/Maps.cpp
 modules/Materials.cpp
 modules/Notes.cpp
+modules/Once.cpp
 modules/Random.cpp
+modules/Renderer.cpp
 modules/Screen.cpp
 modules/Translation.cpp
+modules/Units.cpp
 modules/Vermin.cpp
-modules/World.cpp
-modules/Graphic.cpp
 modules/Windows.cpp
-modules/Once.cpp
-modules/Filesystem.cpp
+modules/World.cpp
 )
+
+SET(STATIC_FIELDS_FILES)
+FOREACH(GROUP other a b c d e f g h i j k l m n o p q r s t u v w x y z)
+    SET(STATIC_FIELDS_FILENAME ${dfhack_SOURCE_DIR}/library/DataStaticsFields/${GROUP}.cpp)
+    IF(${GROUP} STREQUAL "other")
+        SET(STATIC_FIELDS_INC_FILENAME "df/static.fields.inc")
+    ELSE()
+        SET(STATIC_FIELDS_INC_FILENAME "df/static.fields-${GROUP}.inc")
+    ENDIF()
+    FILE(WRITE ${STATIC_FIELDS_FILENAME}.tmp
+        "#define STATIC_FIELDS_GROUP\n"
+        "#include \"../DataStaticsFields.cpp\"\n"
+        "#include \"${STATIC_FIELDS_INC_FILENAME}\"\n"
+    )
+    EXECUTE_PROCESS(COMMAND ${CMAKE_COMMAND} -E copy_if_different
+        ${STATIC_FIELDS_FILENAME}.tmp ${STATIC_FIELDS_FILENAME})
+    FILE(REMOVE ${STATIC_FIELDS_FILENAME}.tmp)
+    LIST(APPEND STATIC_FIELDS_FILES ${STATIC_FIELDS_FILENAME})
+ENDFOREACH()
+LIST(APPEND MAIN_SOURCES ${STATIC_FIELDS_FILES})
 
 IF(WIN32)
     SOURCE_GROUP("Modules\\Headers" FILES ${MODULE_HEADERS})
@@ -188,17 +217,36 @@ FILE(GLOB PROJECT_PROTOS ${CMAKE_CURRENT_SOURCE_DIR}/proto/*.proto)
 
 STRING(REPLACE ".proto" ".pb.cc" PROJECT_PROTO_SRCS "${PROJECT_PROTOS}")
 STRING(REPLACE ".proto" ".pb.h" PROJECT_PROTO_HDRS "${PROJECT_PROTOS}")
+STRING(REPLACE "/proto/" "/proto/tmp/" PROJECT_PROTO_TMP_FILES "${PROJECT_PROTO_SRCS};${PROJECT_PROTO_HDRS}")
+SET_SOURCE_FILES_PROPERTIES(${PROJECT_PROTO_SRCS} ${PROJECT_PROTO_HDRS}
+    PROPERTIES GENERATED TRUE)
+
+# Force a re-gen if any *.pb.* files are missing
+# (only runs when cmake is run, but better than nothing)
+FOREACH(file IN LISTS PROJECT_PROTO_SRCS PROJECT_PROTO_HDRS)
+    IF(NOT EXISTS ${file})
+        # MESSAGE("Resetting generate_proto_core because '${file}' is missing")
+        FILE(REMOVE ${PROJECT_PROTO_TMP_FILES})
+        BREAK()
+    ENDIF()
+ENDFOREACH()
 
 LIST(APPEND PROJECT_HEADERS ${PROJECT_PROTO_HDRS})
 LIST(APPEND PROJECT_SOURCES ${PROJECT_PROTO_SRCS})
 
 ADD_CUSTOM_COMMAND(
-    OUTPUT ${PROJECT_PROTO_SRCS} ${PROJECT_PROTO_HDRS}
+    OUTPUT ${PROJECT_PROTO_TMP_FILES}
     COMMAND protoc-bin -I=${CMAKE_CURRENT_SOURCE_DIR}/proto/
-            --cpp_out=dllexport_decl=DFHACK_EXPORT:${CMAKE_CURRENT_SOURCE_DIR}/proto/
+            --cpp_out=dllexport_decl=DFHACK_EXPORT:${CMAKE_CURRENT_SOURCE_DIR}/proto/tmp/
             ${PROJECT_PROTOS}
+    COMMAND ${PERL_EXECUTABLE} ${CMAKE_SOURCE_DIR}/depends/copy-if-different.pl
+            ${PROJECT_PROTO_TMP_FILES}
+            ${CMAKE_CURRENT_SOURCE_DIR}/proto/
+    COMMENT "Generating core protobufs"
     DEPENDS protoc-bin ${PROJECT_PROTOS}
 )
+
+ADD_CUSTOM_TARGET(generate_proto_core DEPENDS ${PROJECT_PROTO_TMP_FILES})
 
 # Merge headers into sources
 SET_SOURCE_FILES_PROPERTIES( ${PROJECT_HEADERS} PROPERTIES HEADER_FILE_ONLY TRUE )
@@ -222,10 +270,10 @@ ADD_CUSTOM_TARGET(generate_headers DEPENDS ${dfapi_SOURCE_DIR}/include/df/codege
 
 IF(UNIX)
   # Don't produce debug info for generated stubs
-  SET_SOURCE_FILES_PROPERTIES(DataStatics.cpp DataStaticsCtor.cpp DataStaticsFields.cpp
+  SET_SOURCE_FILES_PROPERTIES(DataStatics.cpp DataStaticsCtor.cpp DataStaticsFields.cpp ${STATIC_FIELDS_FILES}
                               PROPERTIES COMPILE_FLAGS "-g0 -O1")
 ELSE(WIN32)
-  SET_SOURCE_FILES_PROPERTIES(DataStatics.cpp DataStaticsCtor.cpp DataStaticsFields.cpp
+  SET_SOURCE_FILES_PROPERTIES(DataStatics.cpp DataStaticsCtor.cpp DataStaticsFields.cpp ${STATIC_FIELDS_FILES}
                               PROPERTIES COMPILE_FLAGS "/O1 /bigobj")
 ENDIF()
 
@@ -239,20 +287,40 @@ IF(UNIX)
     ENDIF()
 ENDIF()
 
-IF(UNIX)
-  SET(PROJECT_LIBS rt dl dfhack-md5 dfhack-tinyxml dfhack-tinythread)
-  IF(APPLE)
-      SET(PROJECT_LIBS dl dfhack-md5 dfhack-tinyxml dfhack-tinythread)
- ENDIF()
+IF(APPLE)
+  SET(PROJECT_LIBS dl dfhack-md5 ${DFHACK_TINYXML} dfhack-tinythread)
+ELSEIF(UNIX)
+  SET(PROJECT_LIBS rt dl dfhack-md5 ${DFHACK_TINYXML} dfhack-tinythread)
 ELSE(WIN32)
   #FIXME: do we really need psapi?
-  SET(PROJECT_LIBS psapi dfhack-tinyxml dfhack-tinythread)
+  SET(PROJECT_LIBS psapi dfhack-md5 ${DFHACK_TINYXML} dfhack-tinythread)
 ENDIF()
 
-ADD_LIBRARY(dfhack SHARED ${PROJECT_SOURCES})
-ADD_DEPENDENCIES(dfhack generate_headers)
+ADD_LIBRARY(dfhack-version STATIC DFHackVersion.cpp)
+SET_PROPERTY(TARGET dfhack-version APPEND PROPERTY COMPILE_DEFINITIONS
+    DFHACK_VERSION="${DFHACK_VERSION}"
+    DF_VERSION="${DF_VERSION}"
+    DFHACK_RELEASE="${DFHACK_RELEASE}"
+)
+IF(DFHACK_PRERELEASE)
+    SET_PROPERTY(TARGET dfhack-version APPEND PROPERTY COMPILE_DEFINITIONS
+        DFHACK_PRERELEASE=1
+    )
+ENDIF()
 
-ADD_LIBRARY(dfhack-client SHARED RemoteClient.cpp ColorText.cpp MiscUtils.cpp ${PROJECT_PROTO_SRCS})
+ADD_CUSTOM_TARGET(git-describe
+    COMMAND ${CMAKE_COMMAND}
+        -D dfhack_SOURCE_DIR:STRING=${dfhack_SOURCE_DIR}
+        -D GIT_EXECUTABLE:STRING=${GIT_EXECUTABLE}
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/git-describe.cmake
+    COMMENT "Obtaining git commit information"
+)
+ADD_DEPENDENCIES(dfhack-version git-describe)
+
+ADD_LIBRARY(dfhack SHARED ${PROJECT_SOURCES})
+ADD_DEPENDENCIES(dfhack generate_headers generate_proto_core)
+
+ADD_LIBRARY(dfhack-client SHARED RemoteClient.cpp ColorText.cpp MiscUtils.cpp Error.cpp ${PROJECT_PROTO_SRCS})
 ADD_DEPENDENCIES(dfhack-client dfhack)
 
 ADD_EXECUTABLE(dfhack-run dfhack-run.cpp)
@@ -280,17 +348,23 @@ ENDIF()
 SET_TARGET_PROPERTIES(dfhack  PROPERTIES DEBUG_POSTFIX "-debug" )
 
 IF(APPLE)
-    SET(SDL_LIBRARY ${CMAKE_INSTALL_PREFIX}/libs/SDL.framework)
+    SET(DF_SDL_LIBRARY ${CMAKE_INSTALL_PREFIX}/libs/SDL.framework/Versions/A/SDL)
+    IF(NOT EXISTS ${DF_SDL_LIBRARY})
+        MESSAGE(SEND_ERROR "SDL framework not found. Make sure CMAKE_INSTALL_PREFIX is specified and correct.")
+    ENDIF()
+    SET(SDL_LIBRARY ${CMAKE_BINARY_DIR}/SDL)
+    EXECUTE_PROCESS(COMMAND ${CMAKE_COMMAND} -E copy_if_different ${DF_SDL_LIBRARY} ${SDL_LIBRARY})
     SET(CXX_LIBRARY ${CMAKE_INSTALL_PREFIX}/libs/libstdc++.6.dylib)
     SET(ZIP_LIBRARY /usr/lib/libz.dylib)
     TARGET_LINK_LIBRARIES(dfhack ${SDL_LIBRARY})
     TARGET_LINK_LIBRARIES(dfhack ${CXX_LIBRARY})
     TARGET_LINK_LIBRARIES(dfhack ${ZIP_LIBRARY})
+    TARGET_LINK_LIBRARIES(dfhack ncurses)
     SET_TARGET_PROPERTIES(dfhack PROPERTIES VERSION 1.0.0)
     SET_TARGET_PROPERTIES(dfhack PROPERTIES SOVERSION 1.0.0)
 ENDIF()
 
-TARGET_LINK_LIBRARIES(dfhack protobuf-lite clsocket lua ${PROJECT_LIBS})
+TARGET_LINK_LIBRARIES(dfhack protobuf-lite clsocket lua jsoncpp dfhack-version ${PROJECT_LIBS})
 SET_TARGET_PROPERTIES(dfhack PROPERTIES LINK_INTERFACE_LIBRARIES "")
 
 TARGET_LINK_LIBRARIES(dfhack-client protobuf-lite clsocket)
@@ -306,6 +380,8 @@ IF(UNIX)
                 DESTINATION .)
         install(PROGRAMS ${dfhack_SOURCE_DIR}/package/darwin/dfhack-run
                 DESTINATION .)
+        install(PROGRAMS ${dfhack_SOURCE_DIR}/package/darwin/osx${DFHACK_BUILD_ARCH}/libstdc++.6.dylib
+                DESTINATION ./hack/)
     else()
         # On linux, copy our version of the df launch script which sets LD_PRELOAD
         install(PROGRAMS ${dfhack_SOURCE_DIR}/package/linux/dfhack
@@ -316,7 +392,7 @@ IF(UNIX)
 ELSE()
     if(NOT BUILD_EGGY)
         # On windows, copy the renamed SDL so DF can still run.
-        install(PROGRAMS ${dfhack_SOURCE_DIR}/package/windows/SDLreal.dll
+        install(PROGRAMS ${dfhack_SOURCE_DIR}/package/windows/win${DFHACK_BUILD_ARCH}/SDLreal.dll
                 DESTINATION ${DFHACK_LIBRARY_DESTINATION})
     endif()
 ENDIF()
@@ -336,7 +412,7 @@ endif()
 install(FILES xml/symbols.xml
         DESTINATION ${DFHACK_DATA_DESTINATION}) #linux: share/dfhack
 #install the example autoexec file
-install(FILES ../dfhack.init-example
+install(FILES ../dfhack.init-example ../onLoad.init-example
         DESTINATION ${DFHACK_BINARY_DESTINATION})
 
 install(TARGETS dfhack-run dfhack-client binpatch
@@ -346,12 +422,6 @@ install(TARGETS dfhack-run dfhack-client binpatch
 install(DIRECTORY lua/
         DESTINATION ${DFHACK_LUA_DESTINATION}
         FILES_MATCHING PATTERN "*.lua")
-
-install(DIRECTORY ${dfhack_SOURCE_DIR}/scripts
-        DESTINATION ${DFHACK_DATA_DESTINATION}
-        FILES_MATCHING PATTERN "*.lua"
-                       PATTERN "*.rb"
-        )
 
 install(DIRECTORY ${dfhack_SOURCE_DIR}/patches
         DESTINATION ${DFHACK_DATA_DESTINATION}
@@ -368,8 +438,4 @@ if(BUILD_DEVEL)
     install(DIRECTORY include/
             DESTINATION ${DFHACK_INCLUDES_DESTINATION}
             FILES_MATCHING PATTERN "*.h" PATTERN "*.inc" ) #linux: include
-    # Building the docs
-    IF(BUILD_DOXYGEN)
-        add_subdirectory (doc)
-    ENDIF()
 endif()

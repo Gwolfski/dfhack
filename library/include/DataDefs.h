@@ -345,7 +345,7 @@ namespace DFHack
 
         bool is_direct_instance(virtual_ptr instance_ptr) {
             if (!instance_ptr) return false;
-            return vtable_ptr ? (vtable_ptr == get_vtable(instance_ptr)) 
+            return vtable_ptr ? (vtable_ptr == get_vtable(instance_ptr))
                               : (this == get(instance_ptr));
         }
 
@@ -398,7 +398,7 @@ int linear_index(const DFHack::enum_list_attr<T> &lst, T val) {
 inline int linear_index(const DFHack::enum_list_attr<const char*> &lst, const std::string &val) {
     for (size_t i = 0; i < lst.size; i++)
         if (lst.items[i] == val)
-            return i;
+            return (int)i;
     return -1;
 }
 
@@ -700,7 +700,7 @@ namespace DFHack {
 #define ENUM_NEXT_ITEM(enum,val) \
     (DFHack::next_enum_item<df::enum>(val))
 #define FOR_ENUM_ITEMS(enum,iter) \
-    for(df::enum iter = ENUM_FIRST_ITEM(enum); iter <= ENUM_LAST_ITEM(enum); iter = df::enum(1+int(iter)))
+    for(df::enum iter = ENUM_FIRST_ITEM(enum); is_valid_enum_item(iter); iter = df::enum(1+int(iter)))
 
 /*
  * Include mandatory generated headers.
